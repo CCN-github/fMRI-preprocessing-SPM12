@@ -10,7 +10,9 @@ In order to run this script, call the preprocessing_BIDS function, giving it one
 The script will then run the preprocessing for that subejct.   
 
 23/01/2018 v.0.9.0: - stable version
-
+01/07/2018 v.1.0.0: - adapted to multi-band sequence 
+                    - added segmentation step (both by: Carlos Gonzalez-Garcia, carlos.gonzalezgarcia@ugent.be)
+					
 David Wisniewski (david.wisniewski@ugent.be)
  %}
 
@@ -19,7 +21,7 @@ David Wisniewski (david.wisniewski@ugent.be)
 %{
 The script is partly modular. You can switch specific preprocessing step on (=1) or off (=0) here. 
 The order of the steps is fixed at the moment though. It is assumed that you run your preprocessing
-in the order: deface -> fieldmap -> realign and unwarp -> slice time correction -> coregistration -> normalization -> smoothing
+in the order: deface -> fieldmap -> realign and unwarp -> slice time correction -> coregistration -> segmentation -> normalization -> smoothing
 %}
 
 do_deface = 1;          % deface the anatomical image to anonymize the data
@@ -27,6 +29,7 @@ do_fieldmap = 1;        % calculate fieldmap (vdm file)
 do_realign_unwarp = 1;  % realignment (get rid of movement artifacts) + unwarping (account for disortions in the magnetic field using the fieldmap)
 do_slice_time = 1;      % slice time correction
 do_coregister = 1;      % coregistration of T1 to EPI images
+do_segment = 1;         % segment T1 and create inverse and forward models
 do_norm=1;              % normalize images to MNI space
 do_smooth=1;            % smooth images    
 
@@ -37,11 +40,11 @@ specify the paramters of your dataset here
 % specify the number of functional runs acquired
 nruns=5;                
 % slice time corrections
-param.st.nslices = 33; % number of slices per volume
-param.st.tr = 2; %TR in sec
-param.st.ta = 1.93939393939394; %time of acquisition for one slice, i.e. TR./nslices
-param.st.so = [33:-1:1]; % slice acquisition order
-param.st.refslice = 17; % reference slice, for fMRI usually the middle slice
+param.st.nslices = 50; % number of slices per volume
+param.st.tr = 1.73; %TR in sec
+param.st.ta = 1.73-(1.73/50); %time of acquisition for one slice, i.e. TR - (TR./nslices)
+param.st.so = [0.82, 0, 0.8875, 0.0675, 0.9575, 0.1375, 1.025, 0.205, 1.0925, 0.2725, 1.1625, 0.3425, 1.23, 0.41, 1.3, 0.4775, 1.3675, 0.5475, 1.435, 0.615, 1.505, 0.6825, 1.5725, 0.7525, 1.64, 0.82, 0, 0.8875, 0.0675, 0.9575, 0.1375, 1.025, 0.205, 1.0925, 0.2725, 1.1625, 0.3425, 1.23, 0.41, 1.3, 0.4775, 1.3675, 0.5475, 1.435, 0.615, 1.505, 0.6825, 1.5725, 0.7525, 1.64]*1000; % slice acquisition order
+param.st.refslice = max(param.st.so)/2; % reference slice, for fMRI usually the middle slice
 % smoothing
 param.smooth.fwhm = [8 8 8]; % define the smoothing kernel in mm
 
@@ -54,7 +57,7 @@ basedir = '\\folder\BIDS';
 % side note: BIDS splits your data into the raw unprocessed images, and derivatives. The latter are all images derived from the raw data, e.g. preprocessed images.
 derivativesdir = '\\folder\derivatives';
 subdir=['\sub-' substr];
-
+% please also check below as well. The fieldmap and segmentation steps require you to change folders in the respective code segments as well. 
 
 %% RUN THE ANALYSIS
 
@@ -94,7 +97,7 @@ if do_fieldmap
         matlabbatch{1}.spm.tools.fieldmap.calculatevdm.subj.defaults.defaultsval.uflags.fwhm = 10;
         matlabbatch{1}.spm.tools.fieldmap.calculatevdm.subj.defaults.defaultsval.uflags.pad = 0;
         matlabbatch{1}.spm.tools.fieldmap.calculatevdm.subj.defaults.defaultsval.uflags.ws = 1;
-        matlabbatch{1}.spm.tools.fieldmap.calculatevdm.subj.defaults.defaultsval.mflags.template = {'F:\Data\Programs Scripts\spm12\toolbox\FieldMap\T1.nii'};
+        matlabbatch{1}.spm.tools.fieldmap.calculatevdm.subj.defaults.defaultsval.mflags.template = {'F:\Data\Programs Scripts\spm12\toolbox\FieldMap\T1.nii'}; % change the folder here
         matlabbatch{1}.spm.tools.fieldmap.calculatevdm.subj.defaults.defaultsval.mflags.fwhm = 5;
         matlabbatch{1}.spm.tools.fieldmap.calculatevdm.subj.defaults.defaultsval.mflags.nerode = 2;
         matlabbatch{1}.spm.tools.fieldmap.calculatevdm.subj.defaults.defaultsval.mflags.ndilate = 4;
@@ -235,32 +238,64 @@ if do_coregister
         
 end
 
+%% SEGMENTATION
+% segment T1 with inverse and forward models
+if do_segmentation == 1
+    clear matlabbatch;
+    matlabbatch{1}.spm.spatial.preproc.channel.vols = cellstr(spm_select('FPList', [derivativesdir subdir '\anat\'], '^rsub.*.nii$'));
+    matlabbatch{1}.spm.spatial.preproc.channel.biasreg = 0.001;
+    matlabbatch{1}.spm.spatial.preproc.channel.biasfwhm = 60;
+    matlabbatch{1}.spm.spatial.preproc.channel.write = [0 0];
+    matlabbatch{1}.spm.spatial.preproc.tissue(1).tpm = {'D:\Data\Programs_Scripts\spm12\tpm\TPM.nii,1'}; % change the folders here
+    matlabbatch{1}.spm.spatial.preproc.tissue(1).ngaus = 1;
+    matlabbatch{1}.spm.spatial.preproc.tissue(1).native = [1 0];
+    matlabbatch{1}.spm.spatial.preproc.tissue(1).warped = [0 0];
+    matlabbatch{1}.spm.spatial.preproc.tissue(2).tpm = {'D:\Data\Programs_Scripts\spm12\tpm\TPM.nii,2'}; % and here
+    matlabbatch{1}.spm.spatial.preproc.tissue(2).ngaus = 1;
+    matlabbatch{1}.spm.spatial.preproc.tissue(2).native = [1 0];
+    matlabbatch{1}.spm.spatial.preproc.tissue(2).warped = [0 0];
+    matlabbatch{1}.spm.spatial.preproc.tissue(3).tpm = {'D:\Data\Programs_Scripts\spm12\tpm\TPM.nii,3'}; % and here
+    matlabbatch{1}.spm.spatial.preproc.tissue(3).ngaus = 2;
+    matlabbatch{1}.spm.spatial.preproc.tissue(3).native = [1 0];
+    matlabbatch{1}.spm.spatial.preproc.tissue(3).warped = [0 0];
+    matlabbatch{1}.spm.spatial.preproc.tissue(4).tpm = {'D:\Data\Programs_Scripts\spm12\tpm\TPM.nii,4'}; % and here
+    matlabbatch{1}.spm.spatial.preproc.tissue(4).ngaus = 3;
+    matlabbatch{1}.spm.spatial.preproc.tissue(4).native = [1 0];
+    matlabbatch{1}.spm.spatial.preproc.tissue(4).warped = [0 0];
+    matlabbatch{1}.spm.spatial.preproc.tissue(5).tpm = {'D:\Data\Programs_Scripts\spm12\tpm\TPM.nii,5'}; % and here
+    matlabbatch{1}.spm.spatial.preproc.tissue(5).ngaus = 4;
+    matlabbatch{1}.spm.spatial.preproc.tissue(5).native = [1 0];
+    matlabbatch{1}.spm.spatial.preproc.tissue(5).warped = [0 0];
+    matlabbatch{1}.spm.spatial.preproc.tissue(6).tpm = {'D:\Data\Programs_Scripts\spm12\tpm\TPM.nii,6'}; % and here
+    matlabbatch{1}.spm.spatial.preproc.tissue(6).ngaus = 2;
+    matlabbatch{1}.spm.spatial.preproc.tissue(6).native = [0 0];
+    matlabbatch{1}.spm.spatial.preproc.tissue(6).warped = [0 0];
+    matlabbatch{1}.spm.spatial.preproc.warp.mrf = 1;
+    matlabbatch{1}.spm.spatial.preproc.warp.cleanup = 1;
+    matlabbatch{1}.spm.spatial.preproc.warp.reg = [0 0.001 0.5 0.05 0.2];
+    matlabbatch{1}.spm.spatial.preproc.warp.affreg = 'mni';
+    matlabbatch{1}.spm.spatial.preproc.warp.fwhm = 0;
+    matlabbatch{1}.spm.spatial.preproc.warp.samp = 3;
+    matlabbatch{1}.spm.spatial.preproc.warp.write = [1 1];
+    spm_jobman('run', matlabbatch);
+    clear matlabbatch;
+end
+
 
 %% NORMALIZATION
 %normalize the images to MNI space
 if do_norm
     clear matlabbatch;
-    % pick the images to be normalized
-	img_files = [cellstr(spm_select('FPList', [derivativesdir subdir '\func\'], '^ausub.*\.nii$'))];
-    % use the coregistered T1 as a reference image      
-    matlabbatch{1}.spm.spatial.normalise.estwrite.subj.vol = cellstr(spm_select('FPList', [derivativesdir subdir '\anat\'], '^rsub.*.nii$'));
-    % define files to normalize
-    matlabbatch{1}.spm.spatial.normalise.estwrite.subj.resample = img_files;
-    matlabbatch{1}.spm.spatial.normalise.estwrite.eoptions.biasreg = 0.0001;
-    matlabbatch{1}.spm.spatial.normalise.estwrite.eoptions.biasfwhm = 60;
-    matlabbatch{1}.spm.spatial.normalise.estwrite.eoptions.tpm = {'F:\Data\Programs Scripts\spm12\tpm\TPM.nii'};
-    matlabbatch{1}.spm.spatial.normalise.estwrite.eoptions.affreg = 'mni';
-    matlabbatch{1}.spm.spatial.normalise.estwrite.eoptions.reg = [0 0.001 0.5 0.05 0.2];
-    matlabbatch{1}.spm.spatial.normalise.estwrite.eoptions.fwhm = 0;
-    matlabbatch{1}.spm.spatial.normalise.estwrite.eoptions.samp = 3;
-    matlabbatch{1}.spm.spatial.normalise.estwrite.woptions.bb = [-78 -112 -70
-                                                                 78 76 85];
-    matlabbatch{1}.spm.spatial.normalise.estwrite.woptions.vox = [2 2 2];
-    matlabbatch{1}.spm.spatial.normalise.estwrite.woptions.interp = 4;
-    matlabbatch{1}.spm.spatial.normalise.estwrite.woptions.prefix = 'w';
-    spm_jobman('run', matlabbatch);
-    
-    
+    % new normaization, using deformation fields from segmentation
+    img_files = cellstr(spm_select('FPList', [derivativesdir subdir '\func\'], '^ausub.*\.nii$'));
+    matlabbatch{1}.spm.spatial.normalise.write.subj.def = cellstr(spm_select('FPList', [derivativesdir subdir '\anat\'], '^y.*.nii$'));
+    matlabbatch{1}.spm.spatial.normalise.write.subj.resample = img_files;
+    matlabbatch{1}.spm.spatial.normalise.write.woptions.bb = [-78 -112 -70
+        78 76 85];
+    matlabbatch{1}.spm.spatial.normalise.write.woptions.vox = [2 2 2];
+    matlabbatch{1}.spm.spatial.normalise.write.woptions.interp = 4;
+    matlabbatch{1}.spm.spatial.normalise.write.woptions.prefix = 'w';
+    spm_jobman('run', matlabbatch); 
 end
 
 %% SMOOTHING
